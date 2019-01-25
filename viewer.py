@@ -28,8 +28,9 @@ class DataViewer:
 
         assert (gmaps[0].shape[0] == gmaps[1].shape[0])
         assert (gmaps[0].shape[0] == gmaps[2].shape[0])
-        self.grid_rows = gmaps[0].shape[0]
-        self.grid_cols = gmaps[0].shape[1]
+        assert np.sum(gmaps[0] > 1) == 0 \
+               and np.sum(gmaps[1] > 1) == 0 \
+               and np.sum(gmaps[2] > 1) == 0
         
         return imgs, gmaps
 
