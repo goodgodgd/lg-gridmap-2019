@@ -9,13 +9,13 @@ import path_provider as pp
 class DataLoader:
     def __init__(self, date: str, drive_id: int):
         self.data_path = pp.get_path(date, drive_id)
-        print("datapath", self.data_path)
         self.default_image_dir = "image_00"
         if not os.path.isdir(os.path.join(self.data_path, self.default_image_dir)):
             self.default_image_dir = "image_02"
             if not os.path.isdir(os.path.join(self.data_path, self.default_image_dir)):
                 raise FileNotFoundError("no image directory in {}".format(self.data_path))
         self.default_image_path = os.path.join(self.data_path, self.default_image_dir, "data")
+        print("default image path:", self.default_image_path)
         self.image_list = glob.glob(self.default_image_path + "/*.png")
         self.image_list.sort()
 
@@ -49,6 +49,6 @@ class DataLoader:
     def read_grid_map(self, default_path, gmap_name):
         gmap_file = default_path.replace(self.default_image_dir + "/data", gmap_name)
         gmap_file = gmap_file.replace(".png", ".csv")
-        grid_map = np.loadtxt(gmap_file, dtype=np.int32, delimiter=",")
+        grid_map = np.loadtxt(gmap_file, dtype=np.uint8, delimiter=",")
         return grid_map
 
