@@ -10,51 +10,48 @@ class DataViewer:
         self.grid_rows = 0
     
     def show(self, data_loader, index, im_width):
-        imL, imR, fcn_gmap, lidar_gmap, yolo_gmap = self.load_n_check(data_loader, index)
-        imL, imR, fcn_gmap, lidar_gmap, yolo_gmap = \
-            self.process_to_disp_img(imL, imR, fcn_gmap, lidar_gmap, yolo_gmap, im_width)
+        imgs, gmaps = self.load_n_check(data_loader, index)
+        imgs, gmaps = self.process_to_disp_img(imgs, gmaps, im_width)
 
         # concatenate gmaps horizontally
-        gmaps = np.concatenate([fcn_gmap, lidar_gmap, yolo_gmap], axis=1)
-        # concatenate gamp with imL vertically
-        disp_img = np.concatenate([imL, gmaps], axis=0)
+        gmaps = np.concatenate(gmaps, axis=1)
+        # concatenate gamp with imgs[0] vertically
+        disp_img = np.concatenate([imgs[0], gmaps], axis=0)
 
         cv2.imshow("srcdata", disp_img)
         cv2.waitKey(10)
 
     def load_n_check(self, data_loader, index):
-        imL, imR, fcn_gmap, lidar_gmap, yolo_gmap \
-            = data_loader.load_data(index, False, True)
-        print("loaded shapes: ", index, imL.shape, imR.shape,
-              fcn_gmap.shape, lidar_gmap.shape, yolo_gmap.shape)
+        imgs, gmaps = data_loader.load_data(index, False, True)
+        print("loaded shapes: ", index, imgs[0].shape, imgs[1].shape,
+              gmaps[0].shape, gmaps[1].shape, gmaps[2].shape)
 
-        assert (fcn_gmap.shape[0] == lidar_gmap.shape[0])
-        assert (fcn_gmap.shape[0] == yolo_gmap.shape[0])
-        self.grid_rows = fcn_gmap.shape[0]
-        self.grid_cols = fcn_gmap.shape[1]
+        assert (gmaps[0].shape[0] == gmaps[1].shape[0])
+        assert (gmaps[0].shape[0] == gmaps[2].shape[0])
+        self.grid_rows = gmaps[0].shape[0]
+        self.grid_cols = gmaps[0].shape[1]
         
-        return imL, imR, fcn_gmap, lidar_gmap, yolo_gmap
+        return imgs, gmaps
 
-    def process_to_disp_img(self, imL, imR, fcn_gmap, lidar_gmap, yolo_gmap, im_width):
-        grid_cols, grid_rows = fcn_gmap.shape
+    def process_to_disp_img(self, imgs, gmaps, im_width):
+        grid_cols, grid_rows = gmaps[0].shape
         grid_pixels = im_width // (grid_cols * 3)
         gmap_width = grid_pixels * grid_cols
         im_width = grid_pixels * (grid_cols * 3)
 
         # grid map to binary image
-        fcn_gmap = self.prep_grid_map(fcn_gmap)
-        lidar_gmap = self.prep_grid_map(lidar_gmap)
-        yolo_gmap = self.prep_grid_map(yolo_gmap)
+        for i in range(3):
+            gmaps[i] = self.prep_grid_map(gmaps[i])
 
-        imL = self.resize_by_width(imL, im_width)
-        fcn_gmap = self.resize_by_width(fcn_gmap, gmap_width)
-        lidar_gmap = self.resize_by_width(lidar_gmap, gmap_width)
-        yolo_gmap = self.resize_by_width(yolo_gmap, gmap_width)
+        # resize to be concatenated to a single image
+        for i in range(2):
+            imgs[i] = self.resize_by_width(imgs[i], im_width)
+        for i in range(3):
+            gmaps[i] = self.resize_by_width(gmaps[i], gmap_width)
+        print("resized shapes: ", imgs[0].shape,
+              gmaps[0].shape, gmaps[1].shape, gmaps[2].shape)
 
-        print("resized shapes: ", imL.shape,
-              fcn_gmap.shape, lidar_gmap.shape, yolo_gmap.shape)
-
-        return imL, imR, fcn_gmap, lidar_gmap, yolo_gmap
+        return imgs, gmaps
 
     @staticmethod
     def prep_grid_map(gmap):
