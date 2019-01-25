@@ -29,26 +29,26 @@ class DataLoader:
             image_dirs = ["image_00", "image_01"]
         else:
             image_dirs = ["image_02", "image_03"]
-        image_list = self.read_images(default_image_path, self.default_img_dir, image_dirs)
+        image_list = self._read_images(default_image_path, self.default_img_dir, image_dirs)
         if not read_gmap:
             return image_list
 
         gmap_dirs = ["Image_FCN", "LiDAR_road", "yolo_distance"]
         gmap_list = []
         for mapdir in gmap_dirs:
-            gmap_list.append(self.read_grid_map(default_image_path, mapdir))
+            gmap_list.append(self._read_grid_map(default_image_path, mapdir))
 
         return image_list, gmap_list
 
     @staticmethod
-    def read_images(default_path, default_dir, image_dirs):
+    def _read_images(default_path, default_dir, image_dirs):
         image_list = []
         for imgdir in image_dirs:
             image = cv2.imread(default_path.replace(default_dir, imgdir))
             image_list.append(image)
         return image_list
 
-    def read_grid_map(self, default_path, gmap_name):
+    def _read_grid_map(self, default_path, gmap_name):
         gmap_file = default_path.replace(self.default_img_dir + "/data", gmap_name)
         gmap_file = gmap_file.replace(".png", ".csv")
         grid_map = np.loadtxt(gmap_file, dtype=np.uint8, delimiter=",")
