@@ -69,6 +69,10 @@ class DataViewer:
         # print("reshape before:", ih, iw, "/ after:", image.shape)
         return image
 
+    # TODO
+    def show_gmaps(self, gmaps):
+        pass
+
 
 def main():
     viewer = DataViewer()
