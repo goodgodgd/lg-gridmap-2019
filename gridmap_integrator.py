@@ -1,5 +1,6 @@
 import numpy as np
 import dataset_loader
+import viewer
 
 
 class GridMapIntegrator:
@@ -81,13 +82,14 @@ class GridMapIntegrator:
         return value
 
     def update_map(self, integ_map, grid_maps):
-        return integ_map
+        return grid_maps
 
 
 def main():
     grid_mapper = GridMapIntegrator()
     kitti_loader = dataset_loader.KittiDataLoader("2011_09_26", "0015")
     for ind in range(len(kitti_loader)):
+        # TODO: pose만 텍스트로 따로 저장하기
         gmaps = kitti_loader.get_gmaps(ind)
         Tmat = kitti_loader.get_pose(ind)
         print("Tmat: {}\n{}".format(ind, Tmat))
