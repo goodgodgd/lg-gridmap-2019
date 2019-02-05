@@ -31,7 +31,7 @@ class KittiDataLoader(DataLoader):
         self.data_path = pp.get_path(date, drive_id)
         self.default_img_dir = "image_00"
         self.default_img_path = os.path.join(self.data_path, self.default_img_dir, "data")
-        print("default image path:", self.default_img_path)
+        print("[KittiDataLoader] image path:", self.default_img_path)
         self.default_img_list = glob.glob(self.default_img_path + "/*.png")
         assert self.default_img_list, "no images in {}".format(self.default_img_path)
         self.default_img_list.sort()

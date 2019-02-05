@@ -8,18 +8,21 @@ class DataViewer:
     def __init__(self):
         pass
 
-    def show(self, image, gmaps, wnd_width):
+    def show(self, image, gmaps, wnd_width, wait=0):
         gridmap = self.gmaps_to_image(gmaps)
         gridmap = self.fit_to_window(gridmap, wnd_width, int_ratio=True)
-        image = self.fit_to_window(image, gridmap.shape[1], max_height=300)
+        image = self.fit_to_window(image, gridmap.shape[1], max_height=200)
         dispimg = np.concatenate([image, gridmap], axis=0)
         cv2.imshow("viewer", dispimg)
-        cv2.waitKey(5)
+        cv2.waitKey(wait)
 
     @staticmethod
     def gmaps_to_image(gmaps):
-        gridmap = np.concatenate(list(gmaps.values()), axis=1)
-        gridmap = gridmap * 255
+        grid_list = []
+        for key, gmap in gmaps.items():
+            assert np.max(gmap) < 1.001
+            grid_list.append((gmap * 255).astype(np.uint8))
+        gridmap = np.concatenate(grid_list, axis=1)
         gridmap = cv2.cvtColor(gridmap, cv2.COLOR_GRAY2BGR)
         return gridmap
 
@@ -31,10 +34,14 @@ class DataViewer:
         dst_height = int(round(dst_width / im_width * im_height))
 
         if max_height and dst_height > max_height:
-            dst_height = max_height
-            dst_width = round(max_height / im_width * im_width)
-
-        image = cv2.resize(image, (dst_width, dst_height), cv2.INTER_NEAREST)
+            adj_height = max_height
+            adj_width = round(max_height / im_height * im_width)
+            center = cv2.resize(image, (adj_width, adj_height), cv2.INTER_NEAREST)
+            image = np.zeros(shape=(adj_height, dst_width, 3), dtype=np.uint8)
+            begcol = (dst_width - adj_width) // 2
+            image[:, begcol:(dst_width-begcol), :] = center
+        else:
+            image = cv2.resize(image, (dst_width, dst_height), cv2.INTER_NEAREST)
         return image
 
 
