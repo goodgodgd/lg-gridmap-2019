@@ -9,28 +9,46 @@ class DataViewer:
         pass
 
     def show(self, image, gmaps, wnd_width, wait=0):
-        gridmap = self.gmaps_to_image(gmaps)
-        gridmap = self.fit_to_window(gridmap, wnd_width, int_ratio=True)
-        image = self.fit_to_window(image, gridmap.shape[1], max_height=200)
+        wnd_width, grid_ratio = self.adjust_width(wnd_width, gmaps)
+        gridmap = self.gmaps_to_image(gmaps, grid_ratio)
+        image = self.fit_to_window(image, wnd_width, max_height=200)
         dispimg = np.concatenate([image, gridmap], axis=0)
-        cv2.imshow("viewer", dispimg)
+        cv2.imshow("grid maps", dispimg)
         cv2.waitKey(wait)
 
     @staticmethod
-    def gmaps_to_image(gmaps):
+    def adjust_width(target_width, gmaps):
+        grid_list = list(gmaps.values())
+        grid_cols = grid_list[0].shape[1] * len(grid_list)
+        dst_width = int(round(target_width / grid_cols)) * grid_cols
+        return dst_width, int(dst_width/grid_cols)
+
+    def gmaps_to_image(self, gmaps, ratio: int):
         grid_list = []
         for key, gmap in gmaps.items():
             assert np.max(gmap) < 1.001
-            grid_list.append((gmap * 255).astype(np.uint8))
+            gh, gw = gmap.shape
+            gmap = cv2.cvtColor((gmap * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+            gmap = cv2.resize(gmap, (gw*ratio, gh*ratio), cv2.INTER_NEAREST)
+            gmap = self.put_text(gmap, key)
+            grid_list.append(gmap)
+
         gridmap = np.concatenate(grid_list, axis=1)
-        gridmap = cv2.cvtColor(gridmap, cv2.COLOR_GRAY2BGR)
         return gridmap
 
     @staticmethod
-    def fit_to_window(image, dst_width, int_ratio=False, max_height=None):
+    def put_text(image, text):
+        coordinate = (10, 40)
+        thickness = 1
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        yellow = (0, 255, 255)
+        cv2.putText(image, text, coordinate, font, font_scale, yellow, thickness, cv2.LINE_AA)
+        return image
+
+    @staticmethod
+    def fit_to_window(image, dst_width, max_height=None):
         im_height, im_width = image.shape[:2]
-        if int_ratio:
-            dst_width = int(round(dst_width / im_width)) * image.shape[1]
         dst_height = int(round(dst_width / im_width * im_height))
 
         if max_height and dst_height > max_height:

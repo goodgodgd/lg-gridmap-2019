@@ -1,13 +1,16 @@
 import numpy as np
 import dataset_loader
 import viewer
+from timeit import default_timer as timer
+
+verbosity = False
 
 
 class GridMapIntegrator:
     def __init__(self):
         self.prev_pose = np.identity(4)
-        self.GMCOLS = 80
-        self.GMROWS = 120
+        self.GMCOLS = int(80)
+        self.GMROWS = int(120)
         self.CELLSIZE = 0.5
         self.integ_map = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
         self.origin_cell = [self.GMROWS, self.GMCOLS/2]
@@ -32,37 +35,35 @@ class GridMapIntegrator:
     def set_pose_offset(self, Tmat):
         self.prev_pose = Tmat
 
-    def integrate(self, index, rgb_img, grid_maps, curr_pose):
-        if index < 2:
-            self.integ_map = self.update_map(self.integ_map, grid_maps)
-            print("update map")
-        else:
-            self.integ_map = self.transform_map(self.integ_map, curr_pose)
+    def integrate(self, rgb_img, grid_maps, curr_pose, verbosity=False):
+        grid_maps["prev"] = self.transform_map(self.integ_map, curr_pose)
+        grid_maps["merged"] = self.merge_maps(grid_maps)
+        grid_maps["integ"] = self.update_map(grid_maps["prev"], grid_maps["merged"])
+        self.integ_map = grid_maps["integ"]
         self.prev_pose = curr_pose
-        grid_maps["integ"] = self.integ_map
-        print("integrate end\n", self.integ_map[0:120:20, 10:80:20])
-        self.dviewer.show(rgb_img, grid_maps, 1000, 0)
+        self.dviewer.show(rgb_img, grid_maps, 1200, 0)
 
     def transform_map(self, prev_integ_map, curr_pose):
         tmatrix = np.matmul(np.linalg.inv(self.prev_pose), curr_pose)
-        # print("transform map, tmatrix=\n{}\nmap=\n{}".format(tmatrix, prev_integ_map[0:120:20, 10:80:20]))
-        tmatrix = np.identity(4)
-        tmatrix[0, 3] = 1
-        # find coordinates of current cells w.r.t the previous pose
+
+        # transform coordinates of current cells w.r.t the previous pose
         prev_coords = np.matmul(tmatrix, self.cell_coords)
         prev_cell_inds = self.posit_to_cell(prev_coords)
         curr_integ_map = np.zeros((self.GMROWS, self.GMCOLS))
-        print(self.cell_coords.shape, prev_coords.shape)
-        print(self.cell_inds.shape, prev_cell_inds.shape)
-        print("cell coords\n", np.concatenate([self.cell_coords[:2, 0:100:20].T, prev_coords[:2, 0:100:20].T], axis=1))
-        print("cell coords\n", np.concatenate([self.cell_inds[:2, 0:100:20].T, prev_cell_inds[:2, 0:100:20].T], axis=1))
 
+        if verbosity:
+            print("transform matrix=\n{}".format(tmatrix))
+            print(self.cell_inds.shape, self.cell_coords.shape)
+            print("metric coordinates of the same cell [cur_x, cur_y, prv_x, prv_y]\n",
+                  np.concatenate([self.cell_coords[:2, 0:200:40].T, prev_coords[:2, 0:200:40].T], axis=1))
+            print("grid coordinates of the same cell [cur_row, cur_col, prv_r, prv_c]\n",
+                  np.concatenate([self.cell_inds[:2, 0:200:40].T, prev_cell_inds[:2, 0:200:40].T], axis=1))
+
+        # transform grid map onto the current pose by interpolation
+        start = timer()
         for prvcell, curcell in zip(prev_cell_inds.T, self.cell_inds.T):
             curr_integ_map[curcell[0], curcell[1]] = self.interpolate(prev_integ_map, prvcell)
-            # if prvcell[0] < 30 and prvcell[1] == 30:
-            #     prvcell = prvcell.astype(np.int32)
-            #     print("cell move", prvcell, prev_integ_map[prvcell[0], prvcell[1]],
-            #           curcell, curr_integ_map[curcell[0], curcell[1]])
+        print("interpolation time:", timer() - start)
 
         return curr_integ_map
 
@@ -72,41 +73,57 @@ class GridMapIntegrator:
         return np.array([grid_rows, grid_cols])
 
     def interpolate(self, gmap, cell):
-        if cell[0] < -1 or cell[0] > self.GMROWS+1 \
-                or cell[1] < -1 or cell[1] > self.GMCOLS+1:
-            return 0
-
-        gh, gw = gmap.shape
         major_cell = np.round(cell).astype(np.int32)
-        if major_cell[0] < 0 or major_cell[0] >= gh or \
-                major_cell[1] < 0 or major_cell[1] >= gw:
+        if self.outside_gridmap(major_cell):
             return 0
 
-        return gmap[major_cell[0], major_cell[1]]
+        relposits = np.array([[-1, -1], [-1, 0], [-1, 1],
+                              [0, -1], [0, 0], [0, 1],
+                              [1, -1], [1, 0], [1, 1]])
+        weights = []
+        value = 0
+        for rel_pos in relposits:
+            chk_cell = major_cell + rel_pos
+            pos_err = np.abs(chk_cell - cell)
+            if self.outside_gridmap(chk_cell) or np.any(pos_err > 1):
+                # print("invalid neighbor", rel_pos, cell, chk_cell, pos_err)
+                weights.append(False)
+                continue
 
-        major_cell = np.floor(cell)
-        row_err = cell[0] - major_cell[0] - 0.5
-        col_err = cell[1] - major_cell[1] - 0.5
-        relposs = np.array([[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]])
-        weights = np.array([(1-abs(row_err))*(1-abs(col_err)),
-                   row_err*(1-abs(col_err)),
-                   -row_err*(1-abs(col_err)),
-                   (1-abs(row_err))*col_err,
-                   -(1-abs(row_err))*col_err])
+            weight = (1 - pos_err[0])*(1 - pos_err[1])
+            weights.append(weight)
+            value += gmap[chk_cell[0], chk_cell[1]]
+
+        # skip if all neighbor cells are blank
+        if value == 0:
+            return 0
+
+        weights = np.array(weights)
         wsum = np.sum(weights)
         weights = weights / wsum
 
         value = 0
-        for relpos, weight in zip(relposs, weights):
-            abspos = major_cell + relpos
-            value += gmap[abspos] * weight
+        for rel_pos, weight in zip(relposits, weights):
+            if weight:
+                abs_pos = major_cell + rel_pos
+                value += gmap[abs_pos[0], abs_pos[1]] * weight
         return value
 
-    def update_map(self, integ_map, grid_maps):
+    def outside_gridmap(self, cell):
+        return (cell[0] < 0 or cell[0] >= self.GMROWS
+                or cell[1] < 0 or cell[1] >= self.GMCOLS)
+
+    def merge_maps(self, grid_maps):
+        # TODO: weighted mean
         return np.mean(list(grid_maps.values()), axis=0)
+
+    def update_map(self, before_map, new_map):
+        # TODO: update log likelihood
+        return np.mean(np.array([before_map, new_map]), axis=0)
 
 
 def main():
+    verbosity = True
     grid_mapper = GridMapIntegrator()
     kitti_loader = dataset_loader.KittiDataLoader("2011_09_26", "0015")
     Tmat = kitti_loader.get_pose(0)
@@ -115,8 +132,9 @@ def main():
         images = kitti_loader.get_rgb(ind)
         gmaps = kitti_loader.get_gmaps(ind)
         Tmat = kitti_loader.get_pose(ind)
-        print("index={}, Tmat:\n{}".format(ind, Tmat))
-        grid_mapper.integrate(ind, images["rgbL"], gmaps, Tmat)
+        if verbosity:
+            print("\nindex={}, Tmat:\n{}".format(ind, Tmat))
+        grid_mapper.integrate(images["rgbL"], gmaps, Tmat)
 
 
 if __name__ == "__main__":
