@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 import dataset_loader
+from gridmap_integrator import CELL_VALUE_LIMIT
 
 
 class DataViewer:
@@ -25,8 +26,15 @@ class DataViewer:
 
     def gmaps_to_image(self, gmaps, ratio: int):
         grid_list = []
+
         for key, gmap in gmaps.items():
-            assert np.max(gmap) < 1.001
+            if -0.0001 < np.max(gmap) < 1.0001:
+                gmap = np.clip(gmap, 0, 1)
+            else:
+                print("gridmap min max", key, np.min(gmap), np.max(gmap))
+                gmap = np.clip(gmap, -CELL_VALUE_LIMIT, CELL_VALUE_LIMIT)
+                gmap = gmap.astype(np.float) / (2. * CELL_VALUE_LIMIT) + 0.5
+
             gh, gw = gmap.shape
             gmap = cv2.cvtColor((gmap * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
             gmap = cv2.resize(gmap, (gw*ratio, gh*ratio), cv2.INTER_NEAREST)
@@ -38,7 +46,7 @@ class DataViewer:
 
     @staticmethod
     def put_text(image, text):
-        coordinate = (10, 40)
+        coordinate = (10, 20)
         thickness = 1
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5

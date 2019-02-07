@@ -2,8 +2,12 @@ import numpy as np
 import dataset_loader
 import viewer
 from timeit import default_timer as timer
+import copy
 
 verbosity = True
+VEHICLE_ROW_RANGE = (-2, 4)     # x(front): -1m ~ 2m
+VEHICLE_COL_RANGE = (-2, 2)     # y(left):  -1m ~ 1m
+CELL_VALUE_LIMIT = 5
 
 
 class GridMapIntegrator:
@@ -12,7 +16,10 @@ class GridMapIntegrator:
         self.GMCOLS = int(80)
         self.GMROWS = int(120)
         self.CELLSIZE = 0.5
-        self.integ_map = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_logodd_static = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_logodd_final = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_ogm = np.ones((self.GMROWS, self.GMCOLS), dtype=np.float) * 0.5
+        self.prv_logodd = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
         self.origin_cell = [self.GMROWS, self.GMCOLS/2]
         self.cell_inds = self.cell_indices()
         self.cell_coords = self.cell_coordinates(self.cell_inds)
@@ -36,32 +43,34 @@ class GridMapIntegrator:
         self.prev_pose = transform
 
     def integrate(self, rgb_img, grid_maps, curr_pose):
-        grid_maps["previous"] = self.transform_map(self.integ_map, curr_pose)
-        grid_maps["current"] = self.merge_curr_maps(grid_maps)
-        grid_maps["integrated"] = self.update_map(grid_maps["previous"], grid_maps["current"])
-        self.integ_map = grid_maps["integrated"]
+        # fill grid_maps with logodd maps before and after transformation
+        grid_maps = self.transform_map(curr_pose, grid_maps)
+        # fill grid_maps with self.cur_logodd_static and cur_ogm
+        grid_maps = self.update_map(grid_maps)
         self.prev_pose = curr_pose
         self.dviewer.show(rgb_img, grid_maps, 1200, 0)
 
-    def transform_map(self, prev_integ_map, curr_pose):
-        tmatrix = np.matmul(np.linalg.inv(self.prev_pose), curr_pose)
-
+    def transform_map(self, curr_pose, grid_maps):
+        start = timer()
         # transform coordinates of current cells w.r.t the previous pose
+        tmatrix = np.matmul(np.linalg.inv(self.prev_pose), curr_pose)
         prev_coords = np.matmul(tmatrix, self.cell_coords.T).T
         prev_cell_inds = self.posit_to_cell(prev_coords)
 
-        start = timer()
-        curr_integ_map = self.interpolate(prev_integ_map, prev_cell_inds, self.cell_inds)
+        self.prv_logodd = self.interpolate(self.cur_logodd_final, prev_cell_inds, self.cell_inds)
+        grid_maps["log_bef_transform"] = copy.deepcopy(self.cur_logodd_final)
+        grid_maps["log_aft_transform"] = copy.deepcopy(self.prv_logodd)
+
         if verbosity:
+            print("transform_map took:", timer() - start)
             print("transform matrix=\n{}".format(tmatrix))
             print(self.cell_inds.shape, self.cell_coords.shape)
             print("metric coordinates of the same cell [cur_x, cur_y, prv_x, prv_y]\n",
                   np.concatenate([self.cell_coords[0:200:40, :2], prev_coords[0:200:40, :2]], axis=1))
             print("grid coordinates of the same cell [cur_row, cur_col, prv_r, prv_c]\n",
                   np.concatenate([self.cell_inds[0:200:40, :], prev_cell_inds[0:200:40, :]], axis=1))
-            print("interpolation time:", timer() - start)
 
-        return curr_integ_map
+        return grid_maps
 
     def posit_to_cell(self, points):
         grid_rows = -points[:, 0] / self.CELLSIZE + self.origin_cell[0]
@@ -92,9 +101,6 @@ class GridMapIntegrator:
             neighbor_cells = valid_int_cells + np.tile(relpos, (len(valid_int_cells), 1))
             # calculate neighbor weights that is close to 1 when it is close to src cell
             nei_weight = 1 - np.abs(neighbor_cells - valid_src_cells)
-            # print("valid_src_cells\n{}\nneighbor cells\n{}\nweights of u, v\n{}".
-            #       format(valid_src_cells[100:300:20].T, neighbor_cells[100:300:20].T,
-            #              nei_weight[100:300:20].T))
             # ignore weight < 0
             nei_weight[nei_weight < 0] = 0
             # multiply row weight and column weight
@@ -130,16 +136,46 @@ class GridMapIntegrator:
         return (cell[0] < 0 or cell[0] >= self.GMROWS
                 or cell[1] < 0 or cell[1] >= self.GMCOLS)
 
-    @staticmethod
-    def merge_curr_maps(grid_maps):
-        # TODO: invert grid_maps["cal_yol"]
-        # TODO: expand nonzero regions and append it as ["cam_yol_map"]
-        grid_maps["cal_yol"] = 1 - grid_maps["cal_yol"]
-        return np.mean(list(grid_maps.values()), axis=0)
+    def update_map(self, grid_maps, weights=None):
+        if not weights:
+            weights = {"cam_fcn": 1, "lid_seg": 1, "cam_yol_occ": 2}
 
-    def update_map(self, before_map, new_map):
-        # TODO: update log likelihood
-        return np.mean(np.array([before_map, new_map]), axis=0)
+        grid_maps["cam_yol_occ"] = self.detection_to_occupancy_log(grid_maps["cam_yol"])
+
+        static_keys = ["cam_fcn", "lid_seg"]
+        self.cur_logodd_static = self.prv_logodd
+        for key in static_keys:
+            self.cur_logodd_static += grid_maps[key] * weights[key]
+        self.cur_logodd_static = np.clip(self.cur_logodd_static,
+                                         -CELL_VALUE_LIMIT, CELL_VALUE_LIMIT)
+
+        dynamic_keys = ["cam_yol_occ"]
+        self.cur_logodd_final = copy.deepcopy(self.cur_logodd_static)
+        for key in dynamic_keys:
+            self.cur_logodd_final = np.where(grid_maps[key] > 0,
+                                             -grid_maps[key] * weights[key],
+                                             self.cur_logodd_final)
+
+        self.cur_ogm = self.logodd_to_prob(self.cur_logodd_final)
+        grid_maps["updated_log_odd"] = copy.deepcopy(self.cur_logodd_final)
+        grid_maps["occupancy_map"] = copy.deepcopy(self.cur_ogm)
+        return grid_maps
+
+    def detection_to_occupancy_log(self, detection):
+        row_inds, col_inds = np.where(detection > 0.0001)
+        det_log = np.zeros(detection.shape, dtype=np.int32)
+        for row, col in zip(row_inds, col_inds):
+            rmin = max([row + VEHICLE_ROW_RANGE[0], 0])
+            rmax = min([row + VEHICLE_ROW_RANGE[1], self.GMROWS-1])
+            cmin = max([col + VEHICLE_COL_RANGE[0], 0])
+            cmax = min([col + VEHICLE_COL_RANGE[1], self.GMCOLS - 1])
+            det_log[rmin:rmax, cmin:cmax] = 1
+        return det_log
+
+    @staticmethod
+    def logodd_to_prob(logodd):
+        prob = 1 - 1/(1 + np.exp(logodd))
+        return prob
 
 
 def main():

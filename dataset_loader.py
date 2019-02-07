@@ -71,6 +71,6 @@ class KittiDataLoader(DataLoader):
         default_img_path = self.default_img_list[index]
         gmap_file = default_img_path.replace(self.default_img_dir + "/data", gmap_name)
         gmap_file = gmap_file.replace(".png", ".csv")
-        grid_map = np.loadtxt(gmap_file, dtype=np.uint8, delimiter=",")
+        grid_map = np.loadtxt(gmap_file, dtype=np.int32, delimiter=",")
         return grid_map
 
