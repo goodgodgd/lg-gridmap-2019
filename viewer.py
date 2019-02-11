@@ -28,12 +28,11 @@ class DataViewer:
         grid_list = []
 
         for key, gmap in gmaps.items():
-            if -0.0001 < np.max(gmap) < 1.0001:
-                gmap = np.clip(gmap, 0, 1)
-            else:
-                print("gridmap min max", key, np.min(gmap), np.max(gmap))
+            if "logodd" in key:
                 gmap = np.clip(gmap, -CELL_VALUE_LIMIT, CELL_VALUE_LIMIT)
                 gmap = gmap.astype(np.float) / (2. * CELL_VALUE_LIMIT) + 0.5
+            else:
+                gmap = np.clip(gmap, 0, 1)
 
             gh, gw = gmap.shape
             gmap = cv2.cvtColor((gmap * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)

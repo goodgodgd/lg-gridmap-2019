@@ -9,15 +9,19 @@ VEHICLE_ROW_RANGE = (-2, 4)     # x(front): -1m ~ 2m
 VEHICLE_COL_RANGE = (-2, 2)     # y(left):  -1m ~ 1m
 CELL_VALUE_LIMIT = 5
 
+
 class GridMapIntegrator:
     def __init__(self):
         self.prev_pose = np.identity(4)
         self.GMCOLS = int(80)
         self.GMROWS = int(120)
         self.CELLSIZE = 0.5
-        self.cur_logodd = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_logodd_stat = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_logodd_dyna = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.cur_logodd_merge = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
         self.cur_ogm = np.ones((self.GMROWS, self.GMCOLS), dtype=np.float) * 0.5
-        self.prv_logodd = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.prv_logodd_stat = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
+        self.prv_logodd_dyna = np.zeros((self.GMROWS, self.GMCOLS), dtype=np.float)
         self.origin_cell = [self.GMROWS, self.GMCOLS/2]
         self.cell_inds = self.cell_indices()
         self.cell_coords = self.cell_coordinates(self.cell_inds)
@@ -55,9 +59,11 @@ class GridMapIntegrator:
         prev_coords = np.matmul(tmatrix, self.cell_coords.T).T
         prev_cell_inds = self.posit_to_cell(prev_coords)
 
-        self.prv_logodd = self.interpolate(self.cur_logodd, prev_cell_inds, self.cell_inds)
-        grid_maps["log_bef_transform"] = copy.deepcopy(self.cur_logodd)
-        grid_maps["log_aft_transform"] = copy.deepcopy(self.prv_logodd)
+        self.prv_logodd_stat = self.interpolate(self.cur_logodd_stat, prev_cell_inds, self.cell_inds)
+        # TODO: applay motion model for dynamic objects
+        self.prv_logodd_dyna = self.interpolate(self.cur_logodd_dyna, prev_cell_inds, self.cell_inds)
+        grid_maps["T_logodd_static"] = copy.deepcopy(self.prv_logodd_stat)
+        grid_maps["T_logodd_dynamic"] = copy.deepcopy(self.prv_logodd_dyna)
 
         if VERBOSITY:
             print("transform_map took:", timer() - start)
@@ -150,20 +156,35 @@ class GridMapIntegrator:
 
         grid_maps["cam_yol_occ"] = self.detection_to_occupancy_log(grid_maps["cam_yol"])
 
+        # update static map
+        self.cur_logodd_stat = self.prv_logodd_stat
         static_keys = ["cam_fcn", "lid_seg"]
-        self.cur_logodd = self.prv_logodd
         for key in static_keys:
-            self.cur_logodd += grid_maps[key] * weights[key]
-        self.cur_logodd = np.clip(self.cur_logodd, -CELL_VALUE_LIMIT, CELL_VALUE_LIMIT)
+            self.cur_logodd_stat += grid_maps[key] * weights[key]
+        self.cur_logodd_stat = np.clip(self.cur_logodd_stat, -CELL_VALUE_LIMIT, CELL_VALUE_LIMIT)
 
+        # attenuate dynamic map
+        self.cur_logodd_dyna = np.minimum(self.prv_logodd_dyna + 1, 0)
+        print("dyna minumum", np.min(self.prv_logodd_dyna), np.min(self.cur_logodd_dyna))
+        # update dynamic map with new objects
         dynamic_keys = ["cam_yol_occ"]
         for key in dynamic_keys:
-            self.cur_logodd = np.where(grid_maps[key] > 0,
-                                       -grid_maps[key] * weights[key],
-                                       self.cur_logodd)
+            self.cur_logodd_dyna -= grid_maps[key] * weights[key]
+        grid_maps["cur_logodd_dynamic"] = copy.deepcopy(self.cur_logodd_dyna)
 
-        self.cur_ogm = self.logodd_to_prob(self.cur_logodd)
-        grid_maps["updated_log_odd"] = copy.deepcopy(self.cur_logodd)
+        # merge static and dynamic maps
+        self.cur_logodd_merge = np.where(self.cur_logodd_dyna < 0,
+                                         self.cur_logodd_dyna, self.cur_logodd_stat)
+
+        # self.cur_logodd_merge = self.cur_logodd_stat + self.cur_logodd_dyna
+        # # overwrite current object measurement on merged amp
+        # for key in dynamic_keys:
+        #     self.cur_logodd_merge = np.where(grid_maps[key] > 0,
+        #                                      -grid_maps[key] * weights[key],
+        #                                      self.cur_logodd_merge)
+
+        self.cur_ogm = self.logodd_to_prob(self.cur_logodd_merge)
+        grid_maps["updated_logodd"] = self.cur_logodd_merge
         grid_maps["occupancy_map"] = copy.deepcopy(self.cur_ogm)
         return grid_maps
 
